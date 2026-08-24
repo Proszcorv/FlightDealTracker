@@ -1,11 +1,13 @@
-# TimerTrigger - C<span>#</span>
+# Flight Deal Tracker ✈️
+An automated serverless application built with C# and Azure Functions that monitors and alerts on cheap flight deals.
 
-The `TimerTrigger` makes it incredibly easy to have your functions executed on a schedule. This sample demonstrates a simple use case of calling your function every 5 minutes.
+## Features
+- **Automated Scanning:** Runs on a daily schedule using Azure TimerTrigger.
+- **Global Reach:** Scans European and international destinations using external APIs.
+- **Smart Filtering:** Automatically filters flights under a specific price threshold.
+- **Email Notifications:** Sends formatted daily reports with direct booking links via SMTP.
 
-## How it works
-
-For a `TimerTrigger` to work, you provide a schedule in the form of a [cron expression](https://en.wikipedia.org/wiki/Cron#CRON_expression)(See the link for full details). A cron expression is a string with 6 separate expressions which represent a given schedule via patterns. The pattern we use to represent every 5 minutes is `0 */5 * * * *`. This, in plain text, means: "When seconds is equal to 0, minutes is divisible by 5, for any hour, day of the month, month, day of the week, or year".
-
-## Learn more
-
-<TODO> Documentation
+## Tech Stack
+- C# / .NET 8 (Isolated Worker Model)
+- Microsoft Azure Functions
+- RESTful APIs & JSON Deserialization
