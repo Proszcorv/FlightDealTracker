@@ -75,9 +75,9 @@ namespace FlightDealTracker
                                 {
                                     string skyCode = result.content?.location?.skyCode.ToLower();
 
-                                    string linkDate = DateTime.Now.AddMonths(1).ToString("yyMMdd");
+                                    string linkMonth = DateTime.Now.AddMonths(1).ToString("yyMM");
 
-                                    string bookingLink = $"https://www.skyscanner.hu/transport/flights/bud/{skyCode}/{linkDate}/?adults=1&cabinclass=economy&rtn=0";
+                                    string bookingLink = $"https://www.skyscanner.hu/transport/flights/bud/{skyCode}/{linkMonth}/?adults=1&cabinclass=economy&rtn=0";
 
                                     string line = $"- {destinationName} ({continentName}): {formattedPrice} ({flightType})\n  Foglalás és részletek: {bookingLink}\n";
                                     _logger.LogInformation($"> TALÁLAT: {line}");
