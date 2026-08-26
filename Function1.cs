@@ -5,10 +5,8 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Mail;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using static System.Net.WebRequestMethods;
 
 namespace FlightDealTracker
 {
@@ -16,7 +14,6 @@ namespace FlightDealTracker
     {
         private readonly ILogger _logger;
         private static readonly HttpClient client = new HttpClient();
-
         private static readonly string stateFilePath = Path.Combine(Path.GetTempPath(), "lowest_dublin_price.txt");
 
         public FlightDealTracker(ILoggerFactory loggerFactory)
@@ -27,13 +24,17 @@ namespace FlightDealTracker
         [Function("FlightDealTracker")]
         public async Task Run([TimerTrigger("0 0 8 */2 * *")] TimerInfo myTimer)
         {
-            _logger.LogInformation($"A járatkereső elindult: {DateTime.Now}");
+            _logger.LogWarning(">>> 1. TESZT: A járatkereső elindult! <<<");
+
+            // Itt a sortBy=best szerepel a price_high helyett, és benne vannak a helyes Entity ID-k meg a HUF
             string apiUrl = "https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlights" +
-                "?originSkyId=BUD&destinationSkyId=DUB" +
-                "&originEntityId=95673439&destinationEntityId=95673529" +
-                "&date=2027-07-12&returnDate=2027-07-18" +
-                "&cabinClass=economy&adults=1" +
-                "&currency=HUF&market=hu-HU&countryCode=HUN";
+                            "?originSkyId=BUD&destinationSkyId=DUB" +
+                            "&originEntityId=95673439&destinationEntityId=95673529" +
+                            "&date=2027-07-12&returnDate=2027-07-18" +
+                            "&cabinClass=economy&adults=1" +
+                            "&sortBy=best" +
+                            "&currency=HUF&market=hu-HU&countryCode=HUN";
+
             var request = new HttpRequestMessage
             {
                 Method = HttpMethod.Get,
@@ -47,62 +48,58 @@ namespace FlightDealTracker
 
             try
             {
+                _logger.LogWarning(">>> 2. TESZT: Küldjük a kérést az API-nak... <<<");
+
                 using (var response = await client.SendAsync(request))
                 {
+                    _logger.LogWarning($"---> 3. TESZT: Válasz megérkezett, státusz: {response.StatusCode}");
+
                     response.EnsureSuccessStatusCode();
                     var jsonBody = await response.Content.ReadAsStringAsync();
+
                     using var doc = JsonDocument.Parse(jsonBody);
 
+                    // A régi, egyszerűbb és stabilabb elérés, ami eddig is működött
                     if (doc.RootElement.TryGetProperty("data", out var data) &&
                         data.TryGetProperty("itineraries", out var itineraries) &&
                         itineraries.GetArrayLength() > 0)
                     {
-                        int currentLowestPrice = int.MaxValue;
-                        string formattedLowestPrice = "";
+                        // Kivesszük az első találatot (ami a 'best' vagy 'cheapest' rendezés miatt a legrelevánsabb)
+                        var firstItinerary = itineraries[0];
 
-                        foreach (var flight in itineraries.EnumerateArray())
+                        if (firstItinerary.TryGetProperty("price", out var priceElement) &&
+                            priceElement.TryGetProperty("raw", out var rawPriceElement))
                         {
-                            if (flight.TryGetProperty("price", out var priceElement) &&
-                                flight.TryGetProperty("raw", out var rawPriceElement))
-                            {
-                                int tempPrice = (int)Math.Round(rawPriceElement.GetDouble());
+                            int currentLowestPrice = (int)Math.Round(rawPriceElement.GetDouble());
+                            string formattedLowestPrice = priceElement.TryGetProperty("formatted", out var fmt)
+                                ? fmt.GetString() ?? $"{currentLowestPrice} Ft"
+                                : $"{currentLowestPrice} Ft";
 
-                                if (tempPrice < currentLowestPrice)
-                                {
-                                    currentLowestPrice = tempPrice;
-                                    formattedLowestPrice = priceElement.GetProperty("formatted").GetString() ?? $"{currentLowestPrice} Ft";
-                                }
-                            }
-                        }
-
-                        if (currentLowestPrice < int.MaxValue)
-                        {
-                            _logger.LogInformation($"Aktuális legolcsóbb ár Dublinba: {formattedLowestPrice}");
+                            _logger.LogWarning($">>> 4. TESZT: Sikerült kiolvasni az árat: {formattedLowestPrice} <<<");
 
                             int previousLowestPrice = GetPreviousLowestPrice();
 
                             if (currentLowestPrice < previousLowestPrice)
                             {
                                 _logger.LogInformation($"ÚJ REKORD! A régi ár {previousLowestPrice} Ft volt, a mostani {currentLowestPrice} Ft.");
-
                                 await SendEmailNotificationAsync(currentLowestPrice, formattedLowestPrice, previousLowestPrice);
                                 SaveNewLowestPrice(currentLowestPrice);
                             }
                             else
                             {
-                                _logger.LogInformation($"Nem csökkent az ár. (Eddigi minimum: {previousLowestPrice} Ft). Nem küldünk e-mailt.");
+                                _logger.LogInformation($"Nem csökkent az ár. (Eddigi minimum: {previousLowestPrice} Ft).");
                             }
                         }
                     }
                     else
                     {
-                        _logger.LogWarning($"Nem kaptunk járatadatokat. Az API nyers válasza: {jsonBody}");
+                        _logger.LogWarning($"Nem érkezett érvényes járatadat (itineraries). Nyers válasz: {jsonBody}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Hiba történt a futás során: {ex.Message}");
+                _logger.LogError($"HIBA TÖRTÉNT A FUTÁS SORÁN: {ex.Message}");
             }
         }
 
@@ -121,7 +118,7 @@ namespace FlightDealTracker
             var mailMessage = new MailMessage
             {
                 From = new MailAddress("only.ride.info@gmail.com"),
-                Subject = $"ÁRCSÖKKENÉS! Repjegy Dublinba: {formattedPrice}",
+                Subject = $"🚨 ÁRCSÖKKENÉS! Repjegy Dublinba: {formattedPrice}",
                 Body = $"Szuper hír!\n\nOlcsóbb lett a repülőjegy Dublinba (2027. július 12-18.)!\n\n" +
                        $"Új ár: {formattedPrice}\n" +
                        $"Korábbi legolcsóbb ár: {oldPriceText}\n\n" +
@@ -139,20 +136,16 @@ namespace FlightDealTracker
         {
             try
             {
-                if (System.IO.File.Exists(stateFilePath))
+                if (File.Exists(stateFilePath))
                 {
-                    string content = System.IO.File.ReadAllText(stateFilePath);
-                    if (int.TryParse(content, out int price))
-                    {
-                        return price;
-                    }
+                    string content = File.ReadAllText(stateFilePath);
+                    if (int.TryParse(content, out int price)) return price;
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning($"Nem sikerült beolvasni a korábbi árat: {ex.Message}");
             }
-
             return int.MaxValue;
         }
 
@@ -160,7 +153,7 @@ namespace FlightDealTracker
         {
             try
             {
-                System.IO.File.WriteAllText(stateFilePath, price.ToString());
+                File.WriteAllText(stateFilePath, price.ToString());
             }
             catch (Exception ex)
             {
