@@ -1,12 +1,14 @@
+ï»¿using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Logging;
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Mail;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Extensions.Logging;
+using static System.Net.WebRequestMethods;
 
 namespace FlightDealTracker
 {
@@ -15,25 +17,30 @@ namespace FlightDealTracker
         private readonly ILogger _logger;
         private static readonly HttpClient client = new HttpClient();
 
+        private static readonly string stateFilePath = Path.Combine(Path.GetTempPath(), "lowest_dublin_price.txt");
+
         public FlightDealTracker(ILoggerFactory loggerFactory)
         {
             _logger = loggerFactory.CreateLogger<FlightDealTracker>();
         }
 
         [Function("FlightDealTracker")]
-        public async Task Run([TimerTrigger("0 0 8 * * *")] TimerInfo myTimer)
+        public async Task Run([TimerTrigger("0 0 8 */2 * *")] TimerInfo myTimer)
         {
-            _logger.LogInformation($"A járatkeresõ elindult: {DateTime.Now}");
-
-            string targetDate = DateTime.Now.AddMonths(1).ToString("yyyy-MM-dd");
-
+            _logger.LogInformation($"A jÃ¡ratkeresÅ‘ elindult: {DateTime.Now}");
+            string apiUrl = "https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlights" +
+                "?originSkyId=BUD&destinationSkyId=DUB" +
+                "&originEntityId=95673439&destinationEntityId=95673529" +
+                "&date=2027-07-12&returnDate=2027-07-18" +
+                "&cabinClass=economy&adults=1" +
+                "&currency=HUF&market=hu-HU&countryCode=HUN";
             var request = new HttpRequestMessage
             {
                 Method = HttpMethod.Get,
-                RequestUri = new Uri("https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlightEverywhere?originEntityId=27544008&cabinClass=economy&journeyType=one_way&currency=HUF&date={targetDate}"),
+                RequestUri = new Uri(apiUrl),
                 Headers =
                 {
-                    { "x-rapidapi-key", "744be71ac9msh451f0806b930e25p159563jsn5f857040ceae" },
+                    { "x-rapidapi-key", "ce18f1d14fmshde8408d3296d9c4p10f91bjsn863f186d923d" },
                     { "x-rapidapi-host", "sky-scrapper.p.rapidapi.com" },
                 },
             };
@@ -44,86 +51,120 @@ namespace FlightDealTracker
                 {
                     response.EnsureSuccessStatusCode();
                     var jsonBody = await response.Content.ReadAsStringAsync();
+                    using var doc = JsonDocument.Parse(jsonBody);
 
-                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    var flightResult = JsonSerializer.Deserialize<Rootobject>(jsonBody, options);
-
-                    if (flightResult?.data?.results != null)
+                    if (doc.RootElement.TryGetProperty("data", out var data) &&
+                        data.TryGetProperty("itineraries", out var itineraries) &&
+                        itineraries.GetArrayLength() > 0)
                     {
-                        _logger.LogInformation("--- GLOBÁLIS OLCSÓ JÁRATOK KERESÉSE ---");
+                        int currentLowestPrice = int.MaxValue;
+                        string formattedLowestPrice = "";
 
-                        StringBuilder emailBody = new StringBuilder();
-                        emailBody.AppendLine("25 000 Ft alatti nemzetközi repülõjegyek Budapestrõl:\n");
-
-                        int matchCount = 0;
-
-                        // Végigmegyünk az összes városon, amit a világon talált
-                        foreach (var result in flightResult.data.results)
+                        foreach (var flight in itineraries.EnumerateArray())
                         {
-                            var destinationName = result.content?.location?.name;
-                            var continentName = result.content?.location?.continent?.name;
-                            var cheapestQuote = result.content?.flightQuotes?.cheapest;
-
-                            if (cheapestQuote != null)
+                            if (flight.TryGetProperty("price", out var priceElement) &&
+                                flight.TryGetProperty("raw", out var rawPriceElement))
                             {
-                                int rawPrice = cheapestQuote.rawPrice;
-                                string formattedPrice = cheapestQuote.price;
-                                bool isDirect = cheapestQuote.direct;
-                                string flightType = isDirect ? "Közvetlen" : "Átszállásos";
+                                int tempPrice = (int)Math.Round(rawPriceElement.GetDouble());
 
-                                if (rawPrice <= 25000)
+                                if (tempPrice < currentLowestPrice)
                                 {
-                                    string skyCode = result.content?.location?.skyCode.ToLower();
-
-                                    string linkMonth = DateTime.Now.AddMonths(1).ToString("yyMM");
-
-                                    string bookingLink = $"https://www.skyscanner.hu/transport/flights/bud/{skyCode}/{linkMonth}/?adults=1&cabinclass=economy&rtn=0";
-
-                                    string line = $"- {destinationName} ({continentName}): {formattedPrice} ({flightType})\n  Foglalás és részletek: {bookingLink}\n";
-                                    _logger.LogInformation($"> TALÁLAT: {line}");
-                                    emailBody.AppendLine(line);
-                                    matchCount++;
+                                    currentLowestPrice = tempPrice;
+                                    formattedLowestPrice = priceElement.GetProperty("formatted").GetString() ?? $"{currentLowestPrice} Ft";
                                 }
                             }
                         }
 
-                        if (matchCount > 0)
+                        if (currentLowestPrice < int.MaxValue)
                         {
-                            _logger.LogInformation($"{matchCount} olcsó desztinációt találtam. E-mail küldése...");
+                            _logger.LogInformation($"AktuÃ¡lis legolcsÃ³bb Ã¡r Dublinba: {formattedLowestPrice}");
 
-                            var smtpClient = new SmtpClient("smtp.gmail.com")
+                            int previousLowestPrice = GetPreviousLowestPrice();
+
+                            if (currentLowestPrice < previousLowestPrice)
                             {
-                                Port = 587,
-                                Credentials = new NetworkCredential("only.ride.info@gmail.com", "fwbg hqpp ydbp plbv"),
-                                EnableSsl = true,
-                            };
+                                _logger.LogInformation($"ÃšJ REKORD! A rÃ©gi Ã¡r {previousLowestPrice} Ft volt, a mostani {currentLowestPrice} Ft.");
 
-                            var mailMessage = new MailMessage
+                                await SendEmailNotificationAsync(currentLowestPrice, formattedLowestPrice, previousLowestPrice);
+                                SaveNewLowestPrice(currentLowestPrice);
+                            }
+                            else
                             {
-                                From = new MailAddress("only.ride.info@gmail.com"),
-                                Subject = $"Napi Olcsó Repülõjegyek ({matchCount} város)",
-                                Body = emailBody.ToString(),
-                            };
-
-                            mailMessage.To.Add("mate.proszenyak2005@gmail.com");
-
-                            await smtpClient.SendMailAsync(mailMessage);
-                            _logger.LogInformation("Az e-mail sikeresen elküldve!");
-                        }
-                        else
-                        {
-                            _logger.LogInformation("Ma nem találtunk 25 000 Ft alatti járatot, nem küldünk e-mailt.");
+                                _logger.LogInformation($"Nem csÃ¶kkent az Ã¡r. (Eddigi minimum: {previousLowestPrice} Ft). Nem kÃ¼ldÃ¼nk e-mailt.");
+                            }
                         }
                     }
                     else
                     {
-                        _logger.LogWarning("Nem érkezett értelmezhetõ adat az API-tól.");
+                        _logger.LogWarning($"Nem kaptunk jÃ¡ratadatokat. Az API nyers vÃ¡lasza: {jsonBody}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Hiba történt a futás során: {ex.Message}");
+                _logger.LogError($"Hiba tÃ¶rtÃ©nt a futÃ¡s sorÃ¡n: {ex.Message}");
+            }
+        }
+
+        private async Task SendEmailNotificationAsync(int newPrice, string formattedPrice, int oldPrice)
+        {
+            var smtpClient = new SmtpClient("smtp.gmail.com")
+            {
+                Port = 587,
+                Credentials = new NetworkCredential("only.ride.info@gmail.com", "fwbg hqpp ydbp plbv"),
+                EnableSsl = true,
+            };
+
+            string bookingLink = "https://www.skyscanner.hu/transport/flights/bud/dub/270712/270718/";
+            string oldPriceText = oldPrice == int.MaxValue ? "ElsÅ‘ mÃ©rÃ©s" : $"{oldPrice} Ft";
+
+            var mailMessage = new MailMessage
+            {
+                From = new MailAddress("only.ride.info@gmail.com"),
+                Subject = $"ÃRCSÃ–KKENÃ‰S! Repjegy Dublinba: {formattedPrice}",
+                Body = $"Szuper hÃ­r!\n\nOlcsÃ³bb lett a repÃ¼lÅ‘jegy Dublinba (2027. jÃºlius 12-18.)!\n\n" +
+                       $"Ãšj Ã¡r: {formattedPrice}\n" +
+                       $"KorÃ¡bbi legolcsÃ³bb Ã¡r: {oldPriceText}\n\n" +
+                       $"Itt tudod megnÃ©zni Ã©s foglalni:\n{bookingLink}\n\n" +
+                       $"Ãœdv,\nA JÃ¡ratfigyelÅ‘d",
+            };
+
+            mailMessage.To.Add("mate.proszenyak2005@gmail.com");
+
+            await smtpClient.SendMailAsync(mailMessage);
+            _logger.LogInformation("E-mail riasztÃ¡s sikeresen elkÃ¼ldve!");
+        }
+
+        private int GetPreviousLowestPrice()
+        {
+            try
+            {
+                if (System.IO.File.Exists(stateFilePath))
+                {
+                    string content = System.IO.File.ReadAllText(stateFilePath);
+                    if (int.TryParse(content, out int price))
+                    {
+                        return price;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Nem sikerÃ¼lt beolvasni a korÃ¡bbi Ã¡rat: {ex.Message}");
+            }
+
+            return int.MaxValue;
+        }
+
+        private void SaveNewLowestPrice(int price)
+        {
+            try
+            {
+                System.IO.File.WriteAllText(stateFilePath, price.ToString());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Nem sikerÃ¼lt elmenteni az Ãºj Ã¡rat: {ex.Message}");
             }
         }
     }
