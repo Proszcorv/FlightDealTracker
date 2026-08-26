@@ -41,7 +41,7 @@ namespace FlightDealTracker
                 RequestUri = new Uri(apiUrl),
                 Headers =
                 {
-                    { "x-rapidapi-key", "ce18f1d14fmshde8408d3296d9c4p10f91bjsn863f186d923d" },
+                    { "x-rapidapi-key", "63110489b6msh528197b844e03a0p12b975jsn851233903f69" },
                     { "x-rapidapi-host", "sky-scrapper.p.rapidapi.com" },
                 },
             };
