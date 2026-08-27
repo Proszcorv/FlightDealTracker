@@ -29,8 +29,6 @@ namespace FlightDealTracker
             return Path.Combine(basePath, "lowest_dublin_price.txt");
         }
 
-        private static readonly string stateFilePath = GetStateFilePath();
-
         public FlightDealTracker(ILoggerFactory loggerFactory)
         {
             _logger = loggerFactory.CreateLogger<FlightDealTracker>();
@@ -151,9 +149,10 @@ namespace FlightDealTracker
         {
             try
             {
-                if (File.Exists(stateFilePath))
+                string path = GetStateFilePath();
+                if (File.Exists(path))
                 {
-                    string content = File.ReadAllText(stateFilePath);
+                    string content = File.ReadAllText(path);
                     if (int.TryParse(content, out int price)) return price;
                 }
             }
@@ -168,7 +167,8 @@ namespace FlightDealTracker
         {
             try
             {
-                File.WriteAllText(stateFilePath, price.ToString());
+                string path = GetStateFilePath();
+                File.WriteAllText(path, price.ToString());
             }
             catch (Exception ex)
             {
