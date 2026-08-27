@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Net.Mail;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Azure.Storage.Blobs;
 
 namespace FlightDealTracker
 {
@@ -14,19 +15,9 @@ namespace FlightDealTracker
     {
         private readonly ILogger _logger;
         private static readonly HttpClient client = new HttpClient();
-        private static string GetStateFilePath()
+        private string GetBlobConnectionString()
         {
-            string home = Environment.GetEnvironmentVariable("HOME");
-
-    
-            string basePath = string.IsNullOrEmpty(home) ? Path.GetTempPath() : Path.Combine(home, "data");
-
-            if (!Directory.Exists(basePath))
-            {
-                Directory.CreateDirectory(basePath);
-            }
-
-            return Path.Combine(basePath, "lowest_dublin_price.txt");
+            return Environment.GetEnvironmentVariable("AzureWebJobsStorage");
         }
 
         public FlightDealTracker(ILoggerFactory loggerFactory)
@@ -149,16 +140,24 @@ namespace FlightDealTracker
         {
             try
             {
-                string path = GetStateFilePath();
-                if (File.Exists(path))
+                var connectionString = GetBlobConnectionString();
+                if (string.IsNullOrEmpty(connectionString)) return int.MaxValue;
+
+                var blobServiceClient = new BlobServiceClient(connectionString);
+                var containerClient = blobServiceClient.GetBlobContainerClient("flight-data");
+                containerClient.CreateIfNotExists();
+
+                var blobClient = containerClient.GetBlobClient("lowest_dublin_price.txt");
+                if (blobClient.Exists())
                 {
-                    string content = File.ReadAllText(path);
+                    var response = blobClient.DownloadContent();
+                    string content = response.Value.Content.ToString();
                     if (int.TryParse(content, out int price)) return price;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Nem sikerült beolvasni a korábbi árat: {ex.Message}");
+                _logger.LogWarning($"Nem sikerült beolvasni a korábbi árat a Blob-ból: {ex.Message}");
             }
             return int.MaxValue;
         }
@@ -167,12 +166,19 @@ namespace FlightDealTracker
         {
             try
             {
-                string path = GetStateFilePath();
-                File.WriteAllText(path, price.ToString());
+                var connectionString = GetBlobConnectionString();
+                if (string.IsNullOrEmpty(connectionString)) return;
+
+                var blobServiceClient = new BlobServiceClient(connectionString);
+                var containerClient = blobServiceClient.GetBlobContainerClient("flight-data");
+                containerClient.CreateIfNotExists();
+
+                var blobClient = containerClient.GetBlobClient("lowest_dublin_price.txt");
+                blobClient.Upload(BinaryData.FromString(price.ToString()), overwrite: true);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Nem sikerült elmenteni az új árat: {ex.Message}");
+                _logger.LogError($"Nem sikerült elmenteni az új árat a Blob-ba: {ex.Message}");
             }
         }
     }
