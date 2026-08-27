@@ -14,7 +14,22 @@ namespace FlightDealTracker
     {
         private readonly ILogger _logger;
         private static readonly HttpClient client = new HttpClient();
-        private static readonly string stateFilePath = Path.Combine(Path.GetTempPath(), "lowest_dublin_price.txt");
+        private static string GetStateFilePath()
+        {
+            string home = Environment.GetEnvironmentVariable("HOME");
+
+    
+            string basePath = string.IsNullOrEmpty(home) ? Path.GetTempPath() : Path.Combine(home, "data");
+
+            if (!Directory.Exists(basePath))
+            {
+                Directory.CreateDirectory(basePath);
+            }
+
+            return Path.Combine(basePath, "lowest_dublin_price.txt");
+        }
+
+        private static readonly string stateFilePath = GetStateFilePath();
 
         public FlightDealTracker(ILoggerFactory loggerFactory)
         {
