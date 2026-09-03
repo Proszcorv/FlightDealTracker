@@ -11,3 +11,6 @@ An automated serverless application built with C# and Azure Functions that monit
 - C# / .NET 8 (Isolated Worker Model)
 - Microsoft Azure Functions
 - RESTful APIs & JSON Deserialization
+
+## Update:
+- **Targeted Search:** Only searches for specific routes where I would like to go and notifies me if the ticket is cheaper than before.
